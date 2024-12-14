@@ -1,117 +1,89 @@
-/* global api */
-class enen_Collins {
-    constructor(options) {
-        this.options = options;
-        this.maxexample = 2;
-        this.word = '';
+class CambridgeDictionary {
+    constructor() {
+        // Constructor logic, if any, goes here.
     }
 
-    async displayName() {
-        let locale = await api.locale();
-        if (locale.indexOf('CN') != -1) return '柯林斯英英词典';
-        if (locale.indexOf('TW') != -1) return '柯林斯英英词典';
-        return 'Collins English Dictionary';
+    findTerm(word) {
+        return new Promise((resolve, reject) => {
+            // Your code to fetch and process the term from the Cambridge Dictionary
+            const baseUrl = 'https://dictionary.cambridge.org/dictionary/english/';
+            const url = baseUrl + encodeURIComponent(word);
+
+            fetch(url)
+                .then(response => response.text())
+                .then(data => {
+                    let notes = this.parseCambridgeDictionary(data);
+                    resolve(notes);
+                })
+                .catch(error => {
+                    reject(error);
+                });
+        });
     }
 
-
-    setOptions(options) {
-        this.options = options;
-        this.maxexample = options.maxexample;
-    }
-
-    async findTerm(word) {
-        this.word = word;
-        //let deflection = api.deinflect(word);
-        let results = await Promise.all([this.findCollins(word)]);
-        return [].concat(...results).filter(x => x);
-    }
-
-    async findCollins(word) {
+    parseCambridgeDictionary(html) {
         let notes = [];
-        if (!word) return notes; // return empty notes
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
 
-        function T(node) {
-            if (!node)
-                return '';
-            else
-                return node.innerText.trim();
-        }
+        const dictionary = doc.querySelector('.entry-body__el');
+        if (!dictionary) return notes;
 
-        let base = 'https://dictionary.cambridge.org/us/dictionary/english/';
-        let url = base + encodeURIComponent(word);
-        let doc = '';
-        try {
-            let data = await api.fetch(url);
-            let parser = new DOMParser();
-            doc = parser.parseFromString(data, 'text/html');
-        } catch (err) {
-            return [];
-        }
+        const expression = this.getText(dictionary.querySelector('.headword'));
+        const reading = this.getText(dictionary.querySelector('.pron .ipa'));
 
-        let dictionary = doc.querySelector('.dictionary.Cob_Adv_Brit');
-        if (!dictionary) return notes; // return empty notes
+        const audios = this.extractAudioLinks(dictionary);
+        const definitions = this.extractDefinitions(dictionary);
 
-        let expression = T(dictionary.querySelector('.h2_entry'));
-        let reading = T(dictionary.querySelector('.pron'));
-
-        let band = dictionary.querySelector('.word-frequency-img');
-        let bandnum = band ? band.dataset.band : '';
-        let extrainfo = bandnum ? `<span class="band">${'\u25CF'.repeat(Number(bandnum))}</span>` : '';
-
-        let sound = dictionary.querySelector('a.hwd_sound');
-        let audios = sound ? [sound.dataset.srcMp3] : [];
-        // make definition segement
-        let definitions = [];
-        let defblocks = dictionary.querySelectorAll('.hom') || [];
-        for (const defblock of defblocks) {
-            let pos = T(defblock.querySelector('.pos'));
-            pos = pos ? `<span class="pos">${pos}</span>` : '';
-            let eng_tran = T(defblock.querySelector('.sense .def'));
-            if (!eng_tran) continue;
-            let definition = '';
-            eng_tran = eng_tran.replace(RegExp(expression, 'gi'), '<b>$&</b>');
-            eng_tran = `<span class='eng_tran'>${eng_tran}</span>`;
-            let tran = `<span class='tran'>${eng_tran}</span>`;
-            definition += `${pos}${tran}`;
-
-            // make exmaple segement
-            let examps = defblock.querySelectorAll('.sense .cit.type-example') || '';
-            if (examps.length > 0 && this.maxexample > 0) {
-                definition += '<ul class="sents">';
-                for (const [index, examp] of examps.entries()) {
-                    if (index > this.maxexample - 1) break; // to control only 2 example sentence.
-                    let eng_examp = T(examp) ? T(examp).replace(RegExp(expression, 'gi'), '<b>$&</b>') : '';
-                    definition += eng_examp ? `<li class='sent'><span class='eng_sent'>${eng_examp}</span></li>` : '';
-                }
-                definition += '</ul>';
-            }
-            definition && definitions.push(definition);
-        }
         let css = this.renderCSS();
+
         notes.push({
             css,
             expression,
             reading,
-            extrainfo,
             definitions,
-            audios,
+            audios
         });
+
         return notes;
+    }
+
+    getText(node) {
+        return node ? node.innerText.trim() : '';
+    }
+
+    extractAudioLinks(dictionary) {
+        const audios = [];
+        const audioElements = dictionary.querySelectorAll('a.sound');
+        audioElements.forEach(audio => {
+            const audioSrc = audio.dataset.srcMp3;
+            if (audioSrc) audios.push(audioSrc);
+        });
+        return audios;
+    }
+
+    extractDefinitions(dictionary) {
+        const definitions = [];
+        const definitionBlocks = dictionary.querySelectorAll('.def');
+        definitionBlocks.forEach(defBlock => {
+            let definitionText = this.getText(defBlock);
+            if (definitionText) {
+                definitions.push(`<span class='def'>${definitionText}</span>`);
+            }
+        });
+        return definitions;
     }
 
     renderCSS() {
         let css = `
             <style>
-                span.band {color:#e52920;}
-                span.pos  {text-transform:lowercase; font-size:0.9em; margin-right:5px; padding:2px 4px; color:white; background-color:#0d47a1; border-radius:3px;}
-                span.tran {margin:0; padding:0;}
-                span.eng_tran {margin-right:3px; padding:0;}
-                span.chn_tran {color:#0d47a1;}
-                ul.sents {font-size:0.8em; list-style:square inside; margin:3px 0;padding:5px;background:rgba(13,71,161,0.1); border-radius:5px;}
-                li.sent  {margin:0; padding:0;}
-                span.eng_sent {margin-right:5px;}
-                span.chn_sent {color:#0d47a1;}
-            </style>`;
+                span.pos { font-size: 0.9em; font-weight: bold; }
+                span.def { font-size: 1em; margin-bottom: 5px; }
+                ul.sents { font-size: 0.8em; list-style:square inside; margin:5px 0;padding:5px; background:rgba(0,0,0,0.1); border-radius:5px;}
+                li.sent { margin: 0; padding: 0; }
+                span.eng_sent { margin-right:5px;}
+            </style>
+        `;
         return css;
     }
 }
